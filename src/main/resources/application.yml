@@ -1,0 +1,59 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: bio4j-api-gateway
+  cloud:
+    gateway:
+      default-filters:
+        - RemoveRequestHeader=Cookie
+      routes:
+        - id: user-service
+          uri: ${ROUTE_USER_SERVICE_URI:http://localhost:8081}
+          predicates:
+            - Path=/user/**
+          filters:
+            - StripPrefix=1
+        - id: billing-service
+          uri: ${ROUTE_BILLING_SERVICE_URI:http://localhost:8082}
+          predicates:
+            - Path=/billing/**
+          filters:
+            - StripPrefix=1
+  r2dbc:
+    url: ${SPRING_R2DBC_URL:r2dbc:h2:mem:///gatewaydb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+    username: ${SPRING_R2DBC_USERNAME:sa}
+    password: ${SPRING_R2DBC_PASSWORD:}
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      password: ${SPRING_DATA_REDIS_PASSWORD:}
+  sql:
+    init:
+      mode: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+security:
+  jwt:
+    secret: ${SECURITY_JWT_SECRET:replace-with-at-least-32-chars-secret}
+
+app:
+  session:
+    header-name: ${APP_SESSION_HEADER_NAME:X-Session-Id}
+  profile-cache:
+    ttl: ${APP_PROFILE_CACHE_TTL:30m}
+
+logging:
+  level:
+    org.springframework.security: INFO

@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bio4j-api-gateway
+  labels:
+    app: bio4j-api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bio4j-api-gateway
+  template:
+    metadata:
+      labels:
+        app: bio4j-api-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: your-registry/bio4j-api-gateway:0.0.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SECURITY_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bio4j-api-gateway-secret
+                  key: jwt-secret
+            - name: ROUTE_USER_SERVICE_URI
+              value: http://user-service.default.svc.cluster.local:8080
+            - name: ROUTE_BILLING_SERVICE_URI
+              value: http://billing-service.default.svc.cluster.local:8080
+            - name: SPRING_DATA_REDIS_HOST
+              value: redis.default.svc.cluster.local
+            - name: SPRING_DATA_REDIS_PORT
+              value: "6379"
+            - name: APP_PROFILE_CACHE_TTL
+              value: 30m
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 15
