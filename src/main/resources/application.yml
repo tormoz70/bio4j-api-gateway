@@ -8,6 +8,7 @@ spring:
     gateway:
       default-filters:
         - RemoveRequestHeader=Cookie
+        - RemoveRequestHeader=${APP_SESSION_HEADER_NAME:X-Session-Id}
       routes:
         - id: user-service
           uri: ${ROUTE_USER_SERVICE_URI:http://localhost:8081}
@@ -15,24 +16,65 @@ spring:
             - Path=/user/**
           filters:
             - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: userServiceCB
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${RATE_LIMITER_REPLENISH_RATE:50}
+                redis-rate-limiter.burstCapacity: ${RATE_LIMITER_BURST_CAPACITY:100}
+                redis-rate-limiter.requestedTokens: 1
         - id: billing-service
           uri: ${ROUTE_BILLING_SERVICE_URI:http://localhost:8082}
           predicates:
             - Path=/billing/**
           filters:
             - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: billingServiceCB
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${RATE_LIMITER_REPLENISH_RATE:50}
+                redis-rate-limiter.burstCapacity: ${RATE_LIMITER_BURST_CAPACITY:100}
+                redis-rate-limiter.requestedTokens: 1
   r2dbc:
-    url: ${SPRING_R2DBC_URL:r2dbc:h2:mem:///gatewaydb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
-    username: ${SPRING_R2DBC_USERNAME:sa}
+    url: ${SPRING_R2DBC_URL:r2dbc:postgresql://localhost:5432/gatewaydb}
+    username: ${SPRING_R2DBC_USERNAME:gateway}
     password: ${SPRING_R2DBC_PASSWORD:}
+    pool:
+      initial-size: ${R2DBC_POOL_INITIAL_SIZE:5}
+      max-size: ${R2DBC_POOL_MAX_SIZE:20}
+      max-idle-time: ${R2DBC_POOL_MAX_IDLE_TIME:30m}
+      max-life-time: ${R2DBC_POOL_MAX_LIFE_TIME:60m}
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       port: ${SPRING_DATA_REDIS_PORT:6379}
-      password: ${SPRING_DATA_REDIS_PASSWORD:}
-  sql:
-    init:
-      mode: always
+      password: ${SPRING_DATA_REDIS_PASSWORD}
+      lettuce:
+        pool:
+          min-idle: ${REDIS_POOL_MIN_IDLE:2}
+          max-idle: ${REDIS_POOL_MAX_IDLE:8}
+          max-active: ${REDIS_POOL_MAX_ACTIVE:16}
 
 management:
   endpoints:
@@ -46,13 +88,40 @@ management:
 
 security:
   jwt:
-    secret: ${SECURITY_JWT_SECRET:replace-with-at-least-32-chars-secret}
+    public-key-location: ${SECURITY_JWT_PUBLIC_KEY_LOCATION:classpath:jwt-public-key.pem}
 
 app:
   session:
     header-name: ${APP_SESSION_HEADER_NAME:X-Session-Id}
   profile-cache:
     ttl: ${APP_PROFILE_CACHE_TTL:30m}
+    local-max-size: ${APP_PROFILE_CACHE_LOCAL_MAX_SIZE:10000}
+    local-ttl: ${APP_PROFILE_CACHE_LOCAL_TTL:30s}
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:}
+    allowed-methods: ${APP_CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}
+    allowed-headers: ${APP_CORS_ALLOWED_HEADERS:Authorization,Content-Type,X-Session-Id}
+    max-age: ${APP_CORS_MAX_AGE:3600}
+  token-revocation:
+    key-prefix: ${APP_TOKEN_REVOCATION_KEY_PREFIX:revoked-token:}
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+    instances:
+      userServiceCB:
+        base-config: default
+      billingServiceCB:
+        base-config: default
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
 
 logging:
   level:

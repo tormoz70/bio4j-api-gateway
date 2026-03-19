@@ -1,0 +1,15 @@
+spring:
+  r2dbc:
+    url: r2dbc:h2:mem:///testdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+  data:
+    redis:
+      password: ""
+
+security:
+  jwt:
+    public-key-location: classpath:jwt-test-public-key.pem
