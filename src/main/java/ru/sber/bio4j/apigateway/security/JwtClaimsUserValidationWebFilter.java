@@ -52,8 +52,9 @@ public class JwtClaimsUserValidationWebFilter implements WebFilter {
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         return ReactiveSecurityContextHolder.getContext()
                 .map(ctx -> ctx.getAuthentication())
-                .flatMap(auth -> validateUser(auth, exchange, chain))
-                .switchIfEmpty(chain.filter(exchange));
+                .flatMap(auth -> validateUser(auth, exchange, chain).thenReturn(true))
+                .switchIfEmpty(Mono.defer(() -> chain.filter(exchange).thenReturn(true)))
+                .then();
     }
 
     private Mono<Void> validateUser(
@@ -83,8 +84,11 @@ public class JwtClaimsUserValidationWebFilter implements WebFilter {
                         return unauthorizedResponseWriter.write(exchange, AUTH_FAILED);
                     }
                     return resolveProfile(login, sessionId)
-                            .flatMap(profile -> forwardRequest(sessionId, exchange, chain))
-                            .switchIfEmpty(unauthorizedResponseWriter.write(exchange, AUTH_FAILED));
+                            .map(profile -> true)
+                            .defaultIfEmpty(false)
+                            .flatMap(found -> found
+                                    ? forwardRequest(sessionId, exchange, chain)
+                                    : unauthorizedResponseWriter.write(exchange, AUTH_FAILED));
                 });
     }
 
@@ -98,7 +102,7 @@ public class JwtClaimsUserValidationWebFilter implements WebFilter {
 
     private Mono<GatewayUserProfile> resolveProfile(String login, String sessionId) {
         return userProfileCacheService.findBySessionId(sessionId)
-                .switchIfEmpty(loadFromDbAndCache(login, sessionId));
+                .switchIfEmpty(Mono.defer(() -> loadFromDbAndCache(login, sessionId)));
     }
 
     private Mono<GatewayUserProfile> loadFromDbAndCache(String login, String sessionId) {
