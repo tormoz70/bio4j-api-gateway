@@ -1,0 +1,29 @@
+replicaCount: 2
+
+image:
+  repository: your-registry/bio4j-api-gateway
+  tag: "0.0.1"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+resources: {}
+
+podAnnotations: {}
+
+# Optional existing secret name to load sensitive env vars from.
+# Example: SPRING_DATA_REDIS_PASSWORD, DB credentials, etc.
+existingSecretName: ""
+
+config:
+  SERVER_PORT: "8080"
+  ROUTE_USER_SERVICE_URI: "http://user-service.default.svc.cluster.local:8080"
+  ROUTE_BILLING_SERVICE_URI: "http://billing-service.default.svc.cluster.local:8080"
+  SPRING_DATA_REDIS_HOST: "redis.default.svc.cluster.local"
+  SPRING_DATA_REDIS_PORT: "6379"
+  APP_PROFILE_CACHE_TTL: "30m"
+  SECURITY_JWT_PUBLIC_KEY_LOCATION: "classpath:jwt-public-key.pem"
+  SECURITY_JWT_ALLOW_UNSIGNED: "false"

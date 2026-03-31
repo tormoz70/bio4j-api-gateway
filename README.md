@@ -215,6 +215,20 @@ kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 ```
 
+## Helm
+
+Добавлен chart в `helm/bio4j-api-gateway` с конфигурированием сервиса через `ConfigMap`.
+
+- Все несекретные переменные окружения задаются в `values.yaml` в секции `config`.
+- В `Deployment` они подключаются через `envFrom.configMapRef`.
+- Секреты можно подключить через `existingSecretName` (опционально, `envFrom.secretRef`).
+
+Установка:
+
+```bash
+helm upgrade --install bio4j-api-gateway ./helm/bio4j-api-gateway
+```
+
 ## Структура проекта
 
 ```
