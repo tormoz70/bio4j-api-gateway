@@ -89,6 +89,7 @@ management:
 security:
   jwt:
     public-key-location: ${SECURITY_JWT_PUBLIC_KEY_LOCATION:classpath:jwt-public-key.pem}
+    allow-unsigned: ${SECURITY_JWT_ALLOW_UNSIGNED:false}
 
 app:
   session:

@@ -1,5 +1,9 @@
 package ru.sber.bio4j.apigateway.security;
 
+import com.nimbusds.jwt.JWT;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.JWTParser;
+import com.nimbusds.jwt.PlainJWT;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -8,24 +12,34 @@ import java.security.NoSuchAlgorithmException;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
+import java.text.ParseException;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.header.ReferrerPolicyServerHttpHeadersWriter.ReferrerPolicy;
+import org.springframework.util.StringUtils;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
@@ -63,12 +77,37 @@ public class SecurityConfig {
 
     @Bean
     ReactiveJwtDecoder jwtDecoder(
-            @Value("${security.jwt.public-key-location}") Resource publicKeyResource
+            @Value("${security.jwt.public-key-location:}") String publicKeyLocation,
+            @Value("${security.jwt.allow-unsigned:false}") boolean allowUnsigned,
+            ResourceLoader resourceLoader
     ) {
-        RSAPublicKey publicKey = loadRsaPublicKey(publicKeyResource);
-        return NimbusReactiveJwtDecoder.withPublicKey(publicKey)
-                .signatureAlgorithm(SignatureAlgorithm.RS256)
-                .build();
+        ReactiveJwtDecoder signedJwtDecoder = null;
+        if (StringUtils.hasText(publicKeyLocation)) {
+            Resource publicKeyResource = resourceLoader.getResource(publicKeyLocation);
+            RSAPublicKey publicKey = loadRsaPublicKey(publicKeyResource);
+            signedJwtDecoder = NimbusReactiveJwtDecoder.withPublicKey(publicKey)
+                    .signatureAlgorithm(SignatureAlgorithm.RS256)
+                    .build();
+        }
+
+        if (signedJwtDecoder == null) {
+            if (!allowUnsigned) {
+                throw new IllegalStateException(
+                        "security.jwt.public-key-location must be configured when security.jwt.allow-unsigned=false"
+                );
+            }
+            return this::decodeUnsignedJwt;
+        }
+
+        if (!allowUnsigned) {
+            return signedJwtDecoder;
+        }
+
+        ReactiveJwtDecoder finalSignedJwtDecoder = signedJwtDecoder;
+        return token -> finalSignedJwtDecoder.decode(token)
+                .onErrorResume(error -> isUnsecuredJwt(token)
+                        ? decodeUnsignedJwt(token)
+                        : Mono.error(error));
     }
 
     @Bean
@@ -113,6 +152,51 @@ public class SecurityConfig {
         } catch (IOException | NoSuchAlgorithmException | InvalidKeySpecException e) {
             throw new IllegalStateException("Failed to load RSA public key from: " + resource, e);
         }
+    }
+
+    private Mono<Jwt> decodeUnsignedJwt(String token) {
+        try {
+            JWT parsedToken = JWTParser.parse(token);
+            if (!(parsedToken instanceof PlainJWT plainJwt)) {
+                return Mono.error(new BadJwtException("Only unsigned JWT with alg=none are supported in fallback mode"));
+            }
+
+            JWTClaimsSet claimsSet = plainJwt.getJWTClaimsSet();
+            Map<String, Object> headers = new LinkedHashMap<>(plainJwt.getHeader().toJSONObject());
+            Map<String, Object> claims = new LinkedHashMap<>(claimsSet.getClaims());
+            Instant issuedAt = toInstant(claimsSet.getIssueTime());
+            Instant expiresAt = toInstant(claimsSet.getExpirationTime());
+
+            Jwt jwt = new Jwt(
+                    token,
+                    issuedAt != null ? issuedAt : Instant.EPOCH,
+                    expiresAt != null ? expiresAt : Instant.MAX,
+                    headers,
+                    claims
+            );
+
+            var validationResult = new JwtTimestampValidator().validate(jwt);
+            if (validationResult.hasErrors()) {
+                return Mono.error(new BadJwtException("JWT timestamp validation failed"));
+            }
+            return Mono.just(jwt);
+        } catch (ParseException e) {
+            return Mono.error(new BadJwtException("Failed to parse unsigned JWT", e));
+        } catch (JwtException e) {
+            return Mono.error(e);
+        }
+    }
+
+    private boolean isUnsecuredJwt(String token) {
+        try {
+            return JWTParser.parse(token) instanceof PlainJWT;
+        } catch (ParseException e) {
+            return false;
+        }
+    }
+
+    private Instant toInstant(java.util.Date value) {
+        return value == null ? null : value.toInstant();
     }
 
     private List<String> splitCsv(String value) {
